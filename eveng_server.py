@@ -609,6 +609,246 @@ async def eve_connect_node_to_network(
 
 
 # ============================================================
+# GENERIC TOPOLOGY BUILDER
+# ============================================================
+
+@mcp.tool()
+async def eve_build_topology(topology_json: str = "") -> str:
+    """
+    Build a complete lab topology from a JSON definition in a single call.
+
+    topology_json schema
+    --------------------
+    {
+      "lab": {
+        "name": "MyLab",          // required
+        "path": "/",              // folder path (default "/")
+        "description": "...",
+        "author": "...",
+        "version": "1"
+      },
+      "nodes": [
+        {
+          "name": "R1",           // required
+          "template": "vios",     // required
+          "image": "",            // leave blank for template default
+          "ram": 512,
+          "cpu": 1,
+          "ethernet": 4,
+          "icon": "Router.png",
+          "left": 200,
+          "top": 150
+        }
+      ],
+      "networks": [
+        {
+          "name": "LAN",          // required
+          "type": "bridge",       // bridge | ovs | pnet0-9
+          "left": 400,
+          "top": 300
+        }
+      ],
+      "links": [
+        {
+          "node": "R1",           // node name (must match a node above)
+          "interface": 0,         // zero-based interface index
+          "network": "LAN"        // network name (must match a network above)
+        }
+      ]
+    }
+
+    Returns a build log with IDs for every created object.
+    """
+    if not topology_json.strip():
+        return "❌ topology_json is required"
+
+    try:
+        topo = json.loads(topology_json)
+    except json.JSONDecodeError as e:
+        logger.error(f"[TOPOLOGY] Invalid JSON input: {e}")
+        return f"❌ Invalid JSON: {e}"
+
+    lab_def   = topo.get("lab", {})
+    lab_name  = lab_def.get("name", "").strip()
+    if not lab_name:
+        return "❌ topology.lab.name is required"
+
+    folder       = lab_def.get("path", "/").strip() or "/"
+    base_lab     = f"{folder.rstrip('/')}/{lab_name}.unl"
+    encoded_lab  = base_lab.lstrip("/").replace(" ", "%20")
+
+    node_count = len(topo.get("nodes",    []))
+    net_count  = len(topo.get("networks", []))
+    link_count = len(topo.get("links",    []))
+    logger.info(
+        f"[TOPOLOGY] Starting build: '{lab_name}' at '{folder}' — "
+        f"{node_count} node(s), {net_count} network(s), {link_count} link(s)"
+    )
+
+    log: list[str] = [f"🚀 Building topology: {lab_name}"]
+
+    # Maps from user-supplied name -> EVE-NG ID (str)
+    node_ids: dict[str, str] = {}
+    net_ids:  dict[str, str] = {}
+
+    try:
+        async with _client() as c:
+
+            # --------------------------------------------------
+            # 1. Create the lab
+            # --------------------------------------------------
+            logger.info(f"[TOPOLOGY] Creating lab '{lab_name}' in folder '{folder}'")
+            lab_payload = {
+                "path":        folder,
+                "name":        lab_name,
+                "version":     str(lab_def.get("version", "1")),
+                "description": lab_def.get("description", ""),
+                "author":      lab_def.get("author", ""),
+                "body":        "",
+            }
+            r = await c.post(f"{_base_url()}/labs", json=lab_payload)
+            data = r.json()
+            if not _ok(data):
+                logger.error(f"[TOPOLOGY] Lab creation failed: {data.get('message')}")
+                return f"❌ Could not create lab: {data.get('message')}"
+            logger.info(f"[TOPOLOGY] Lab created: {base_lab}")
+            log.append(f"  ✅ Lab created: {base_lab}")
+
+            # --------------------------------------------------
+            # 2. Add nodes
+            # --------------------------------------------------
+            logger.info(f"[TOPOLOGY] Adding {node_count} node(s)...")
+            log.append("\n📐 Nodes:")
+            for node in topo.get("nodes", []):
+                name     = node.get("name", "").strip()
+                template = node.get("template", "").strip()
+                if not name or not template:
+                    logger.warning("[TOPOLOGY] Skipping node — missing name or template")
+                    log.append("  ⚠️  Skipped node with missing name or template")
+                    continue
+
+                payload = {
+                    "template": template,
+                    "type":     "qemu",
+                    "name":     name,
+                    "image":    node.get("image", ""),
+                    "ram":      int(node.get("ram",      512)),
+                    "cpu":      int(node.get("cpu",        1)),
+                    "ethernet": int(node.get("ethernet",   4)),
+                    "left":     int(node.get("left",     200)),
+                    "top":      int(node.get("top",      200)),
+                    "icon":     node.get("icon", "Router.png") or "Router.png",
+                    "config":   "Unconfigured",
+                    "delay":    0,
+                }
+                logger.info(
+                    f"[TOPOLOGY]   Node '{name}' template={template} "
+                    f"RAM={payload['ram']}MB CPU={payload['cpu']} ETH={payload['ethernet']}"
+                )
+                r = await c.post(
+                    f"{_base_url()}/labs/{encoded_lab}/nodes", json=payload
+                )
+                data = r.json()
+                if _ok(data):
+                    nid = str(data.get("data", {}).get("id", "?"))
+                    node_ids[name] = nid
+                    logger.info(f"[TOPOLOGY]   ✅ '{name}' -> ID {nid}")
+                    log.append(f"  ✅ {name} (template={template}) -> ID {nid}")
+                else:
+                    msg = data.get('message', 'unknown error')
+                    logger.warning(f"[TOPOLOGY]   ⚠️  '{name}' failed: {msg}")
+                    log.append(f"  ⚠️  {name}: {msg}")
+
+            # --------------------------------------------------
+            # 3. Add networks
+            # --------------------------------------------------
+            logger.info(f"[TOPOLOGY] Adding {net_count} network(s)...")
+            log.append("\n🌐 Networks:")
+            for net in topo.get("networks", []):
+                name     = net.get("name", "").strip()
+                net_type = net.get("type", "bridge").strip() or "bridge"
+                if not name:
+                    logger.warning("[TOPOLOGY] Skipping network — missing name")
+                    log.append("  ⚠️  Skipped network with missing name")
+                    continue
+
+                payload = {
+                    "name": name,
+                    "type": net_type,
+                    "left": int(net.get("left", 400)),
+                    "top":  int(net.get("top",  300)),
+                }
+                logger.info(f"[TOPOLOGY]   Network '{name}' type={net_type}")
+                r = await c.post(
+                    f"{_base_url()}/labs/{encoded_lab}/networks", json=payload
+                )
+                data = r.json()
+                if _ok(data):
+                    nid = str(data.get("data", {}).get("id", "?"))
+                    net_ids[name] = nid
+                    logger.info(f"[TOPOLOGY]   ✅ '{name}' -> ID {nid}")
+                    log.append(f"  ✅ {name} (type={net_type}) -> ID {nid}")
+                else:
+                    msg = data.get('message', 'unknown error')
+                    logger.warning(f"[TOPOLOGY]   ⚠️  '{name}' failed: {msg}")
+                    log.append(f"  ⚠️  {name}: {msg}")
+
+            # --------------------------------------------------
+            # 4. Wire links
+            # --------------------------------------------------
+            logger.info(f"[TOPOLOGY] Wiring {link_count} link(s)...")
+            log.append("\n🔗 Links:")
+            for link in topo.get("links", []):
+                node_name = link.get("node", "").strip()
+                net_name  = link.get("network", "").strip()
+                iface_idx = str(link.get("interface", 0))
+
+                node_id = node_ids.get(node_name)
+                net_id  = net_ids.get(net_name)
+
+                if not node_id:
+                    logger.warning(f"[TOPOLOGY]   ⚠️  Unknown node '{node_name}' in link — skipped")
+                    log.append(f"  ⚠️  Unknown node '{node_name}' in link — skipped")
+                    continue
+                if not net_id:
+                    logger.warning(f"[TOPOLOGY]   ⚠️  Unknown network '{net_name}' in link — skipped")
+                    log.append(f"  ⚠️  Unknown network '{net_name}' in link — skipped")
+                    continue
+
+                logger.info(
+                    f"[TOPOLOGY]   Connecting {node_name}[{iface_idx}] -> {net_name} "
+                    f"(node_id={node_id}, net_id={net_id})"
+                )
+                r = await c.put(
+                    f"{_base_url()}/labs/{encoded_lab}/nodes/{node_id}/interfaces",
+                    json={iface_idx: int(net_id)},
+                )
+                data = r.json()
+                if _ok(data):
+                    logger.info(f"[TOPOLOGY]   ✅ {node_name}[{iface_idx}] -> {net_name}")
+                    log.append(f"  ✅ {node_name}[{iface_idx}] -> {net_name}")
+                else:
+                    msg = data.get('message', 'unknown error')
+                    logger.warning(f"[TOPOLOGY]   ⚠️  {node_name}[{iface_idx}] -> {net_name}: {msg}")
+                    log.append(f"  ⚠️  {node_name}[{iface_idx}] -> {net_name}: {msg}")
+
+    except Exception as e:
+        logger.error(f"[TOPOLOGY] Fatal error during build: {e}", exc_info=True)
+        log.append(f"❌ Fatal error: {e}")
+        return "\n".join(log)
+
+    logger.info(
+        f"[TOPOLOGY] Build complete — '{lab_name}' at {base_lab} | "
+        f"nodes={len(node_ids)} networks={len(net_ids)} links={link_count}"
+    )
+    log.append(f"\n✅ Topology '{lab_name}' built successfully at {base_lab}")
+    log.append(f"   Nodes   : {len(node_ids)}")
+    log.append(f"   Networks: {len(net_ids)}")
+    log.append(f"   Links   : {link_count}")
+    return "\n".join(log)
+
+
+# ============================================================
 # ENTRY POINT
 # ============================================================
 
