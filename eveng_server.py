@@ -522,6 +522,91 @@ async def eve_add_network(
         return f"❌ Error: {e}"
 
 
+# ============================================================
+# CONNECTIONS
+# ============================================================
+
+@mcp.tool()
+async def eve_list_links(lab_path: str = "") -> str:
+    """List all available ethernet/serial endpoints in a lab (useful before wiring nodes)."""
+    if not lab_path.strip():
+        return "❌ lab_path is required"
+    logger.info(f"[LINKS] Listing available endpoints in lab: {lab_path}")
+    try:
+        async with _client() as c:
+            r = await c.get(f"{_base_url()}/labs/{_encode_path(lab_path)}/links")
+            data = r.json()
+        if _ok(data):
+            logger.info(f"[LINKS] Retrieved endpoint list for '{lab_path}'")
+            return f"🔗 Available endpoints in {lab_path}:\n{_fmt(data['data'])}"
+        logger.warning(f"[LINKS] API error: {data.get('message', 'Unknown error')}")
+        return f"❌ {data.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"[LINKS] Exception listing links in '{lab_path}': {e}")
+        return f"❌ Error: {e}"
+
+
+@mcp.tool()
+async def eve_get_node_interfaces(lab_path: str = "", node_id: str = "") -> str:
+    """Get all interfaces of a node and their current network assignments."""
+    if not lab_path.strip() or not node_id.strip():
+        return "❌ lab_path and node_id are required"
+    logger.info(f"[IFACE] Fetching interfaces for node {node_id} in lab '{lab_path}'")
+    try:
+        async with _client() as c:
+            r = await c.get(
+                f"{_base_url()}/labs/{_encode_path(lab_path)}/nodes/{node_id.strip()}/interfaces"
+            )
+            data = r.json()
+        if _ok(data):
+            logger.info(f"[IFACE] Retrieved interface assignments for node {node_id}")
+            return f"🔌 Interfaces for node {node_id}:\n{_fmt(data['data'])}"
+        logger.warning(f"[IFACE] API error for node {node_id}: {data.get('message', 'Unknown error')}")
+        return f"❌ {data.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"[IFACE] Exception fetching interfaces for node {node_id}: {e}")
+        return f"❌ Error: {e}"
+
+
+@mcp.tool()
+async def eve_connect_node_to_network(
+    lab_path: str = "",
+    node_id: str = "",
+    interface_id: str = "0",
+    network_id: str = "",
+) -> str:
+    """
+    Connect a node interface to a network segment.
+
+    interface_id: zero-based ethernet port index (e.g. 0 = Gi0/0, 1 = Gi0/1).
+    network_id: ID returned by eve_add_network or eve_list_lab_networks.
+    """
+    if not lab_path.strip() or not node_id.strip() or not network_id.strip():
+        return "❌ lab_path, node_id, and network_id are all required"
+    logger.info(
+        f"[CONNECT] Wiring node {node_id} interface {interface_id} "
+        f"-> network {network_id} in lab '{lab_path}'"
+    )
+    payload = {interface_id.strip(): int(network_id.strip())}
+    try:
+        async with _client() as c:
+            r = await c.put(
+                f"{_base_url()}/labs/{_encode_path(lab_path)}/nodes/{node_id.strip()}/interfaces",
+                json=payload,
+            )
+            data = r.json()
+        if _ok(data):
+            logger.info(f"[CONNECT] Node {node_id} iface {interface_id} connected to network {network_id}")
+            return f"✅ Node {node_id} interface {interface_id} -> network {network_id}"
+        logger.warning(
+            f"[CONNECT] Failed to wire node {node_id} iface {interface_id} "
+            f"-> network {network_id}: {data.get('message', 'Unknown error')}"
+        )
+        return f"❌ {data.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"[CONNECT] Exception wiring node {node_id}: {e}")
+        return f"❌ Error: {e}"
+
 
 # ============================================================
 # ENTRY POINT
