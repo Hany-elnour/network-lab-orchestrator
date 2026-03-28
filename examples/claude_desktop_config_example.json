@@ -1,0 +1,43 @@
+{
+    "preferences": {
+        "coworkScheduledTasksEnabled": false,
+        "ccdScheduledTasksEnabled": false,
+        "sidebarMode": "chat",
+        "coworkWebSearchEnabled": true,
+        "keepAwakeEnabled": true
+    },
+    "mcpServers": {
+        "mcp-toolkit-gateway": {
+            "command": "docker",
+            "args": [
+                "run",
+                "-i",
+                "--rm",
+                "-v",
+                "/var/run/docker.sock:/var/run/docker.sock",
+                "-v",
+                "C:\\Users\\hagem\\.docker\\mcp:/mcp",
+                "docker/mcp-gateway",
+                "--catalog=/mcp/catalogs/docker-mcp.yaml",
+                "--catalog=/mcp/catalogs/evengcustomcatalog.yaml",
+                "--config=/mcp/config.yaml",
+                "--registry=/mcp/registry.yaml",
+                "--tools-config=/mcp/tools.yaml",
+                "--transport=stdio"
+            ]
+        },
+        "MCP_DOCKER": {
+            "command": "docker",
+            "args": [
+                "mcp",
+                "gateway",
+                "run"
+            ],
+            "env": {
+                "LOCALAPPDATA": "C:\\Users\\hagem\\AppData\\Local",
+                "ProgramData": "C:\\ProgramData",
+                "ProgramFiles": "C:\\Program Files"
+            }
+        }
+    }
+}

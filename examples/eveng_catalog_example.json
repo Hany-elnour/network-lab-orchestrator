@@ -1,0 +1,52 @@
+version: 2
+name: custom
+displayName: Custom MCP Servers
+registry:
+  eveng:
+    description: "Automate EVE-NG lab topology creation via REST API"
+    title: "EVE-NG Lab Automation"
+    type: server
+    dateAdded: "2026-03-25T00:00:00Z"
+    image: eveng-mcp-server:latest
+    ref: ""
+    tools:
+      - name: eve_login
+      - name: eve_logout
+      - name: eve_status
+      - name: eve_list_templates
+      - name: eve_list_networks
+      - name: eve_list_labs
+      - name: eve_create_lab
+      - name: eve_get_lab
+      - name: eve_delete_lab
+      - name: eve_list_nodes
+      - name: eve_add_node
+      - name: eve_delete_node
+      - name: eve_start_nodes
+      - name: eve_stop_nodes
+      - name: eve_list_lab_networks
+      - name: eve_add_network
+      - name: eve_list_links
+      - name: eve_connect_node_to_network
+      - name: eve_get_node_interfaces
+      - name: eve_build_ccnp_pentest_topology
+      - name: eve_add_pentest_nodes
+    secrets:
+      - name: EVE_HOST
+        env: "http://192.168.86.4"
+        example: "http://192.168.1.50"
+      - name: EVE_USER
+        env: "admin"
+        example: "admin"
+      - name: EVE_PASS
+        env: "eve"
+        example: "eve"
+    metadata:
+      category: automation
+      tags:
+        - networking
+        - eve-ng
+        - pentest
+        - ccnp
+      license: MIT
+      owner: local
