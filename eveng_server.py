@@ -295,6 +295,235 @@ async def eve_delete_lab(lab_path: str = "") -> str:
 
 
 # ============================================================
+# NODE MANAGEMENT
+# ============================================================
+
+@mcp.tool()
+async def eve_list_nodes(lab_path: str = "") -> str:
+    """List all nodes in a lab."""
+    if not lab_path.strip():
+        return "❌ lab_path is required"
+    logger.info(f"[NODES] Listing nodes in lab: {lab_path}")
+    try:
+        async with _client() as c:
+            r = await c.get(f"{_base_url()}/labs/{_encode_path(lab_path)}/nodes")
+            data = r.json()
+        if _ok(data):
+            nodes = data["data"]
+            logger.info(f"[NODES] Found {len(nodes)} node(s) in {lab_path}")
+            lines = [f"🖥️  Nodes in {lab_path}:"]
+            for nid, n in nodes.items():
+                lines.append(
+                    f"  [{nid}] {n.get('name','?')}"
+                    f" | template={n.get('template','?')}"
+                    f" | status={n.get('status','?')}"
+                    f" | url={n.get('url','N/A')}"
+                )
+            return "\n".join(lines)
+        logger.warning(f"[NODES] API error: {data.get('message', 'Unknown error')}")
+        return f"❌ {data.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"[NODES] Exception listing nodes in '{lab_path}': {e}")
+        return f"❌ Error: {e}"
+
+
+@mcp.tool()
+async def eve_add_node(
+    lab_path: str = "",
+    template: str = "",
+    name: str = "",
+    image: str = "",
+    ram: str = "512",
+    cpu: str = "1",
+    ethernet: str = "4",
+    left: str = "200",
+    top: str = "200",
+    icon: str = "Router.png",
+) -> str:
+    """
+    Add a node to a lab. Returns the new node ID.
+
+    Common templates: vios (IOS router), viosl2 (IOS L2 switch),
+    linux (Linux VM), win (Windows VM).
+    Leave `image` empty to use the template default.
+    """
+    if not lab_path.strip():
+        return "❌ lab_path is required"
+    if not template.strip():
+        return "❌ template is required (e.g. vios, viosl2, linux)"
+
+    node_name = name.strip() or template.strip().upper()
+    payload = {
+        "template": template.strip(),
+        "type":     "qemu",
+        "name":     node_name,
+        "image":    image.strip(),
+        "ram":      int(ram)      if ram.strip().isdigit()      else 512,
+        "cpu":      int(cpu)      if cpu.strip().isdigit()      else 1,
+        "ethernet": int(ethernet) if ethernet.strip().isdigit() else 4,
+        "left":     int(left)     if left.strip().isdigit()     else 200,
+        "top":      int(top)      if top.strip().isdigit()      else 200,
+        "icon":     icon.strip()  or "Router.png",
+        "config":   "Unconfigured",
+        "delay":    0,
+    }
+    logger.info(
+        f"[NODE] Adding node '{node_name}' (template={template}) "
+        f"to lab '{lab_path}' — RAM={payload['ram']}MB CPU={payload['cpu']} ETH={payload['ethernet']}"
+    )
+    try:
+        async with _client() as c:
+            r = await c.post(
+                f"{_base_url()}/labs/{_encode_path(lab_path)}/nodes",
+                json=payload,
+            )
+            data = r.json()
+        if _ok(data):
+            node_id = data.get("data", {}).get("id", "?")
+            logger.info(f"[NODE] Node '{node_name}' created with ID {node_id}")
+            return f"✅ Node '{node_name}' added. Node ID: {node_id}"
+        logger.warning(f"[NODE] Failed to add node '{node_name}': {data.get('message', 'Unknown error')}")
+        return f"❌ {data.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"[NODE] Exception adding node '{node_name}': {e}")
+        return f"❌ Error: {e}"
+
+
+@mcp.tool()
+async def eve_delete_node(lab_path: str = "", node_id: str = "") -> str:
+    """Delete a node from a lab by its node ID."""
+    if not lab_path.strip() or not node_id.strip():
+        return "❌ lab_path and node_id are required"
+    logger.info(f"[NODE] Deleting node ID {node_id} from lab '{lab_path}'")
+    try:
+        async with _client() as c:
+            r = await c.delete(
+                f"{_base_url()}/labs/{_encode_path(lab_path)}/nodes/{node_id.strip()}"
+            )
+            data = r.json()
+        if _ok(data):
+            logger.info(f"[NODE] Node {node_id} deleted from '{lab_path}'")
+            return f"✅ Node {node_id} deleted from {lab_path}"
+        logger.warning(f"[NODE] Failed to delete node {node_id}: {data.get('message', 'Unknown error')}")
+        return f"❌ {data.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"[NODE] Exception deleting node {node_id}: {e}")
+        return f"❌ Error: {e}"
+
+
+@mcp.tool()
+async def eve_start_nodes(lab_path: str = "", node_id: str = "") -> str:
+    """Start all nodes in a lab, or a single node when node_id is provided."""
+    if not lab_path.strip():
+        return "❌ lab_path is required"
+    base = f"{_base_url()}/labs/{_encode_path(lab_path)}/nodes"
+    url  = f"{base}/{node_id.strip()}/start" if node_id.strip() else f"{base}/start"
+    target = f"node {node_id}" if node_id.strip() else "all nodes"
+    logger.info(f"[NODE] Starting {target} in lab '{lab_path}'")
+    try:
+        async with _client() as c:
+            r = await c.get(url)
+            data = r.json()
+        if _ok(data):
+            logger.info(f"[NODE] Successfully started {target} in '{lab_path}'")
+            return f"⚡ Started {target} in {lab_path}"
+        logger.warning(f"[NODE] Failed to start {target}: {data.get('message', 'Unknown error')}")
+        return f"❌ {data.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"[NODE] Exception starting {target}: {e}")
+        return f"❌ Error: {e}"
+
+
+@mcp.tool()
+async def eve_stop_nodes(lab_path: str = "", node_id: str = "") -> str:
+    """Stop all nodes in a lab, or a single node when node_id is provided."""
+    if not lab_path.strip():
+        return "❌ lab_path is required"
+    base = f"{_base_url()}/labs/{_encode_path(lab_path)}/nodes"
+    url  = f"{base}/{node_id.strip()}/stop" if node_id.strip() else f"{base}/stop"
+    target = f"node {node_id}" if node_id.strip() else "all nodes"
+    logger.info(f"[NODE] Stopping {target} in lab '{lab_path}'")
+    try:
+        async with _client() as c:
+            r = await c.get(url)
+            data = r.json()
+        if _ok(data):
+            logger.info(f"[NODE] Successfully stopped {target} in '{lab_path}'")
+            return f"🛑 Stopped {target} in {lab_path}"
+        logger.warning(f"[NODE] Failed to stop {target}: {data.get('message', 'Unknown error')}")
+        return f"❌ {data.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"[NODE] Exception stopping {target}: {e}")
+        return f"❌ Error: {e}"
+
+
+# ============================================================
+# NETWORK MANAGEMENT
+# ============================================================
+
+@mcp.tool()
+async def eve_list_lab_networks(lab_path: str = "") -> str:
+    """List all networks (bridges/OVS/cloud) configured in a lab."""
+    if not lab_path.strip():
+        return "❌ lab_path is required"
+    logger.info(f"[NETWORK] Listing networks in lab: {lab_path}")
+    try:
+        async with _client() as c:
+            r = await c.get(f"{_base_url()}/labs/{_encode_path(lab_path)}/networks")
+            data = r.json()
+        if _ok(data):
+            logger.info(f"[NETWORK] Found {len(data['data'])} network(s) in '{lab_path}'")
+            return f"🌐 Networks in {lab_path}:\n{_fmt(data['data'])}"
+        logger.warning(f"[NETWORK] API error: {data.get('message', 'Unknown error')}")
+        return f"❌ {data.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"[NETWORK] Exception listing networks in '{lab_path}': {e}")
+        return f"❌ Error: {e}"
+
+
+@mcp.tool()
+async def eve_add_network(
+    lab_path: str = "",
+    name: str = "",
+    net_type: str = "bridge",
+    left: str = "400",
+    top: str = "300",
+) -> str:
+    """
+    Add a network segment to a lab. Returns the new network ID.
+
+    net_type options: bridge, ovs, pnet0 … pnet9.
+    Use pnet0 to connect to the EVE-NG management interface (cloud).
+    """
+    if not lab_path.strip() or not name.strip():
+        return "❌ lab_path and name are required"
+    payload = {
+        "name": name.strip(),
+        "type": net_type.strip() or "bridge",
+        "left": int(left) if left.strip().isdigit() else 400,
+        "top":  int(top)  if top.strip().isdigit()  else 300,
+    }
+    logger.info(f"[NETWORK] Adding network '{name}' (type={net_type}) to lab '{lab_path}'")
+    try:
+        async with _client() as c:
+            r = await c.post(
+                f"{_base_url()}/labs/{_encode_path(lab_path)}/networks",
+                json=payload,
+            )
+            data = r.json()
+        if _ok(data):
+            net_id = data.get("data", {}).get("id", "?")
+            logger.info(f"[NETWORK] Network '{name}' created with ID {net_id}")
+            return f"✅ Network '{name}' (type={net_type}) added. Network ID: {net_id}"
+        logger.warning(f"[NETWORK] Failed to add network '{name}': {data.get('message', 'Unknown error')}")
+        return f"❌ {data.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"[NETWORK] Exception adding network '{name}': {e}")
+        return f"❌ Error: {e}"
+
+
+
+# ============================================================
 # ENTRY POINT
 # ============================================================
 
